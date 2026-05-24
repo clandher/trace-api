@@ -1,28 +1,45 @@
 import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { createRequire } from 'module';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { join } from 'path';
 // @ts-ignore
 import { setupWSConnection, setPersistence } from 'y-websocket/bin/utils';
 import { AuthService } from '../auth/auth.service.js';
 import { RoomsProvider } from '../rooms/rooms.provider.js';
 
-// Use CJS require so Yjs is the same instance as y-websocket/bin/utils — avoids
-// the "Yjs was already imported" dual-instance warning that breaks CRDT sync.
 const _require = createRequire(import.meta.url);
 const Y = _require('yjs');
 
+// Persist Yjs state to disk so it survives server restarts during dev.
+const PERSIST_DIR = join(process.cwd(), '.yjs-state');
+if (!existsSync(PERSIST_DIR)) mkdirSync(PERSIST_DIR, { recursive: true });
+
+function stateFilePath(docname: string): string {
+  return join(PERSIST_DIR, `${docname.replace(/[^a-zA-Z0-9-_]/g, '_')}.bin`);
+}
+
+// In-memory cache so we don't hit the filesystem on every update.
 const storage = new Map<string, Uint8Array>();
 
 setPersistence({
   bindState: async (docname: string, ydoc: any) => {
+    const file = stateFilePath(docname);
+    if (!storage.has(docname) && existsSync(file)) {
+      storage.set(docname, new Uint8Array(readFileSync(file)));
+    }
     const state = storage.get(docname);
     if (state) Y.applyUpdate(ydoc, state);
     ydoc.on('update', () => {
-      storage.set(docname, Y.encodeStateAsUpdate(ydoc));
+      const encoded = Y.encodeStateAsUpdate(ydoc);
+      storage.set(docname, encoded);
+      try { writeFileSync(file, encoded); } catch { /* non-fatal */ }
     });
   },
   writeState: async (docname: string, ydoc: any) => {
-    storage.set(docname, Y.encodeStateAsUpdate(ydoc));
+    const encoded = Y.encodeStateAsUpdate(ydoc);
+    storage.set(docname, encoded);
+    try { writeFileSync(stateFilePath(docname), encoded); } catch { /* non-fatal */ }
   },
 });
 
