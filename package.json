@@ -1,0 +1,34 @@
+{
+  "name": "collab-canvas-backend",
+  "version": "1.0.0",
+  "description": "Backend de sincronización colaborativa en tiempo real para canvas usando Yjs y WebSockets.",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "keywords": [
+    "yjs",
+    "y-websocket",
+    "crdt",
+    "websocket",
+    "realtime",
+    "collab"
+  ],
+  "author": "Senior Backend Developer",
+  "license": "ISC",
+  "dependencies": {
+    "lib0": "^0.2.91",
+    "ws": "^8.18.0",
+    "y-websocket": "^2.0.4",
+    "yjs": "^13.6.20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.7.1",
+    "typescript": "^5.3.3"
+  }
+}
