@@ -1,45 +1,121 @@
 import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { createRequire } from 'module';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { createClient } from '@supabase/supabase-js';
 // @ts-ignore
 import { setupWSConnection, setPersistence } from 'y-websocket/bin/utils';
 import { AuthService } from '../auth/auth.service.js';
 import { RoomsProvider } from '../rooms/rooms.provider.js';
+import { config } from '../../config/index.js';
 
 const _require = createRequire(import.meta.url);
 const Y = _require('yjs');
 
-// Persist Yjs state to disk so it survives server restarts during dev.
-const PERSIST_DIR = join(process.cwd(), '.yjs-state');
-if (!existsSync(PERSIST_DIR)) mkdirSync(PERSIST_DIR, { recursive: true });
+// Diagnostic — confirms what key is loaded (prefix only).
+console.log('[Yjs persist] SUPABASE_SERVICE_ROLE_KEY prefix:', config.SUPABASE_SERVICE_ROLE_KEY.slice(0, 16), '| length:', config.SUPABASE_SERVICE_ROLE_KEY.length);
 
-function stateFilePath(docname: string): string {
-  return join(PERSIST_DIR, `${docname.replace(/[^a-zA-Z0-9-_]/g, '_')}.bin`);
-}
+// Custom fetch wrapper logs outbound Supabase headers so we can see exactly
+// what PostgREST receives. Strip key values for the log; only show presence.
+const loggingFetch: typeof fetch = async (input, init) => {
+  const url = typeof input === 'string' ? input : (input as Request).url ?? String(input);
+  const headers = new Headers(init?.headers as any);
+  const apikey = headers.get('apikey');
+  const auth = headers.get('Authorization');
+  if (url.includes('/rest/v1/rooms')) {
+    console.log('[Yjs persist] HTTP', init?.method ?? 'GET', url);
+    console.log('  apikey present:', !!apikey, '| prefix:', apikey?.slice(0, 10));
+    console.log('  Authorization:', auth ? (auth.slice(0, 17) + '... | full prefix matches apikey: ' + (auth === `Bearer ${apikey}`)) : 'NONE');
+  }
+  return fetch(input, init);
+};
 
-// In-memory cache so we don't hit the filesystem on every update.
+// Server-role Supabase client for Yjs state persistence. Bypasses RLS.
+const supabaseAdmin = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, {
+  global: { fetch: loggingFetch },
+});
+
+// In-memory cache so we don't hit the database on every update.
 const storage = new Map<string, Uint8Array>();
+// Debounced write timers per room to avoid hammering Postgres on rapid edits.
+const writeTimers = new Map<string, NodeJS.Timeout>();
+const WRITE_DEBOUNCE_MS = 1500;
+
+const persistToDb = async (docname: string, state: Uint8Array): Promise<void> => {
+  const encoded = Buffer.from(state).toString('base64');
+  console.log('[Yjs persist] writing — room:', docname, '| bytes:', state.length, '| base64 len:', encoded.length);
+
+  // Diagnostic: does the admin client see this row at all?
+  const probe = await supabaseAdmin.from('rooms').select('id, host_user_id').eq('id', docname);
+  console.log('[Yjs persist] probe SELECT result — rows:', probe.data?.length ?? 0, '| error:', probe.error?.message ?? 'none');
+
+  const { data, error, status } = await supabaseAdmin
+    .from('rooms')
+    .update({ yjs_state: encoded })
+    .eq('id', docname)
+    .select('id');
+  if (error) {
+    console.error('[Yjs persist] update failed for', docname, '| status:', status, '| error:', error.message, '| details:', error.details);
+  } else if (!data || data.length === 0) {
+    console.warn('[Yjs persist] update affected 0 rows for', docname, '— check RLS, probe result above');
+  } else {
+    console.log('[Yjs persist] saved OK — room:', docname);
+  }
+};
+
+const scheduleWrite = (docname: string, state: Uint8Array): void => {
+  const existing = writeTimers.get(docname);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    writeTimers.delete(docname);
+    persistToDb(docname, state).catch(err => console.error('[Yjs persist] error:', err));
+  }, WRITE_DEBOUNCE_MS);
+  writeTimers.set(docname, timer);
+};
 
 setPersistence({
   bindState: async (docname: string, ydoc: any) => {
-    const file = stateFilePath(docname);
-    if (!storage.has(docname) && existsSync(file)) {
-      storage.set(docname, new Uint8Array(readFileSync(file)));
-    }
-    const state = storage.get(docname);
-    if (state) Y.applyUpdate(ydoc, state);
+    console.log('[Yjs persist] bindState — room:', docname);
+    // Register update listener FIRST so we don't miss updates that arrive
+    // while we're awaiting the initial DB load.
     ydoc.on('update', () => {
       const encoded = Y.encodeStateAsUpdate(ydoc);
       storage.set(docname, encoded);
-      try { writeFileSync(file, encoded); } catch { /* non-fatal */ }
+      console.log('[Yjs persist] ydoc update — scheduling write for', docname);
+      scheduleWrite(docname, encoded);
     });
+
+    if (!storage.has(docname)) {
+      const { data, error } = await supabaseAdmin
+        .from('rooms')
+        .select('yjs_state')
+        .eq('id', docname)
+        .single();
+      if (error) {
+        console.warn('[Yjs persist] load failed for', docname, '| error:', error.message);
+      } else if (data?.yjs_state) {
+        try {
+          storage.set(docname, new Uint8Array(Buffer.from(data.yjs_state, 'base64')));
+          console.log('[Yjs persist] loaded from DB — room:', docname, '| bytes:', storage.get(docname)!.length);
+        } catch (err) {
+          console.error('[Yjs persist] decode failed for', docname, err);
+        }
+      } else {
+        console.log('[Yjs persist] no stored state for room:', docname, '(fresh)');
+      }
+    }
+    const state = storage.get(docname);
+    if (state) Y.applyUpdate(ydoc, state);
   },
   writeState: async (docname: string, ydoc: any) => {
     const encoded = Y.encodeStateAsUpdate(ydoc);
     storage.set(docname, encoded);
-    try { writeFileSync(stateFilePath(docname), encoded); } catch { /* non-fatal */ }
+    const pending = writeTimers.get(docname);
+    if (pending) {
+      clearTimeout(pending);
+      writeTimers.delete(docname);
+    }
+    console.log('[Yjs persist] writeState (flush) — room:', docname);
+    await persistToDb(docname, encoded);
   },
 });
 
