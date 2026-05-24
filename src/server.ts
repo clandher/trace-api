@@ -1,12 +1,13 @@
 import http from 'http';
 import { WebSocketServer } from 'ws';
-import { YjsWebSocketHandler } from './websocket/handler.js';
+import { config } from './config/index.js';
+import { HealthController } from './modules/health/health.controller.js';
+import { RoomsController } from './modules/rooms/rooms.controller.js';
+import { WebsocketGateway } from './modules/websocket/websocket.gateway.js';
 // @ts-ignore
 import { docs } from 'y-websocket/bin/utils';
 
-// Puerto de escucha desde variables de entorno o predeterminado
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 1234;
-const HOST = process.env.HOST || '0.0.0.0';
+const { PORT, HOST } = config;
 
 /**
  * 1. Inicialización del Servidor HTTP nativo.
@@ -25,46 +26,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Ruta de salud e inspección de salas activas (útil para DevOps y monitoreo)
-
-  // Endpoint de salud y versión
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      status: 'ok',
-      uptime: process.uptime(),
-      activeRooms: docs.size,
-      version: require('../package.json').version
-    }));
-    return;
-  }
-
-  // Endpoint: listado de salas activas
+  // Routing HTTP
+  // if (req.url === '/health') {
+  //     HealthController.health(req, res);
+  //   return;
+  // }
   if (req.url === '/rooms') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    const rooms = Array.from(docs.keys());
-    res.end(JSON.stringify({ rooms, count: rooms.length }));
+      RoomsController.list(req, res);
     return;
   }
-
-  // Endpoint: información de una sala específica
   if (req.url?.startsWith('/room-info')) {
-    const urlObj = new URL(req.url, `http://${req.headers.host}`);
-    const room = urlObj.searchParams.get('room');
-    if (!room || !docs.has(room)) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Room not found' }));
-      return;
-    }
-    const sharedDoc = docs.get(room);
-    const users = sharedDoc ? Array.from(sharedDoc.conns.keys()).map((ws) => ws.userId || 'anon') : [];
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      room,
-      usersCount: users.length,
-      users,
-      // Puedes agregar más info relevante aquí
-    }));
+      RoomsController.info(req, res);
     return;
   }
 
@@ -79,25 +51,20 @@ const server = http.createServer((req, res) => {
  */
 const wss = new WebSocketServer({ noServer: true });
 
-// Delegar el proceso de actualización de conexión (handshake upgrade) al servidor WebSocket
 server.on('upgrade', (request, socket, head) => {
-  // Filtrar si la conexión es para la sincronización colaborativa
   const url = new URL(request.url || '', `http://${request.headers.host}`);
-  
   if (url.searchParams.has('room')) {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request);
     });
   } else {
-    // Si no contiene el query parameter obligatorio 'room', cerramos la conexión inmediatamente
     socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nFalta parámetro ?room=');
     socket.destroy();
   }
 });
 
-// 3. Acoplamiento del manejador WebSocket modular
 wss.on('connection', async (ws, req) => {
-  await YjsWebSocketHandler.handleConnection(ws, req);
+  await WebsocketGateway.handleConnection(ws, req);
 });
 
 // 4. Iniciar el servidor

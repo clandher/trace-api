@@ -21,6 +21,7 @@
   "license": "ISC",
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",
+    "dotenv": "^17.4.2",
     "jose": "^6.2.3",
     "lib0": "^0.2.91",
     "ws": "^8.18.0",
