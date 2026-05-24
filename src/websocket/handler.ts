@@ -72,6 +72,21 @@ export class YjsWebSocketHandler {
           // Aquí puedes consultar permisos reales según tu lógica
           ws.send(JSON.stringify({ type: 'permissions', permissions: ['read', 'write'] }));
         }
+        // Utilidad: room info (detalles de la sala y usuarios)
+        if (msg.type === 'room_info') {
+          const sharedDoc = docs.get(room);
+          if (sharedDoc) {
+            const users = Array.from(sharedDoc.conns.keys()).map((ws) => ws.userId || 'anon');
+            ws.send(JSON.stringify({
+              type: 'room_info',
+              room,
+              usersCount: users.length,
+              users
+            }));
+          } else {
+            ws.send(JSON.stringify({ type: 'room_info', error: 'Room not found' }));
+          }
+        }
         // Utilidad: typing indicator (broadcast a la sala)
         if (msg.type === 'typing') {
           const sharedDoc = docs.get(room);
