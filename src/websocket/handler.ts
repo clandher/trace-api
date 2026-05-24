@@ -4,6 +4,11 @@ import * as Y from 'yjs';
 // @ts-ignore
 import { setupWSConnection, docs } from 'y-websocket/bin/utils';
 import { IPersistenceProvider, MemoryPersistenceProvider } from '../database/persistence.js';
+import { verifySupabaseJWT } from '../supabase/auth.js';
+import { isUserAllowed } from '../supabase/rooms.js';
+
+// Mapa para asociar userId a cada WebSocket
+const wsUserMap: WeakMap<WebSocket, string> = new WeakMap();
 
 // Instanciamos el proveedor de persistencia elegido. Por defecto iniciamos con Memory (Desarrollo).
 // En producción, se cambiaría por new MongoPersistenceProvider(...) o RedisPersistenceProvider(...)
@@ -22,9 +27,9 @@ export class YjsWebSocketHandler {
     try {
       // 1. Extraer parámetros de la URL
       const url = new URL(req.url || '', `http://${req.headers.host}`);
-      const room = url.searchParams.get('room');
-      const token = url.searchParams.get('token'); // Hook de Autenticación listo para usar
 
+      const room = url.searchParams.get('room');
+      const token = url.searchParams.get('token');
       console.log(`[WebSocket] Nueva solicitud de conexión. Sala: ${room}, Token: ${token ? 'Proporcionado' : 'Ninguno'}`);
 
       // 2. Validación de la sala
@@ -34,13 +39,21 @@ export class YjsWebSocketHandler {
         return;
       }
 
-      // 3. Hook de Autenticación (Punto de validación clave con el cliente)
-      const isAuthenticated = await this.authenticate(token, room);
-      if (!isAuthenticated) {
-        console.warn(`[WebSocket] Conexión rechazada: Token no válido para la sala ${room}`);
-        ws.close(4002, 'No autorizado para acceder a esta sala');
+      // 3. Validación de autenticación y permisos con Supabase
+      const userId = token ? await verifySupabaseJWT(token) : null;
+      if (!userId) {
+        console.warn(`[WebSocket] Conexión rechazada: Token JWT inválido`);
+        ws.close(4002, 'Token inválido');
         return;
       }
+      const allowed = await isUserAllowed(room, userId);
+      if (!allowed) {
+        console.warn(`[WebSocket] Conexión rechazada: Usuario ${userId} no autorizado para la sala ${room}`);
+        ws.close(4003, 'No autorizado para acceder a esta sala');
+        return;
+      }
+
+      wsUserMap.set(ws, userId);
 
       // 4. Obtener o crear el documento compartido (Y.Doc) para la sala
       // El mapa `docs` proviene de y-websocket/bin/utils.js y mantiene las salas activas en memoria
@@ -51,7 +64,6 @@ export class YjsWebSocketHandler {
 
       // --- Extensión: utilidades custom para el cliente ---
       // Asignar un userId temporal (puedes mejorar esto con autenticación real)
-      ws.userId = url.searchParams.get('user') || `anon-${Math.floor(Math.random()*10000)}`;
 
       // Handler de mensajes custom
       ws.on('message', (data) => {
@@ -60,23 +72,22 @@ export class YjsWebSocketHandler {
         // Utilidad: users in room
         if (msg.type === 'users_in_room') {
           const sharedDoc = docs.get(room);
-          const users = sharedDoc ? Array.from(sharedDoc.conns.keys()).map((ws) => ws.userId || 'anon') : [];
+          const users = sharedDoc ? Array.from(sharedDoc.conns.keys()).map((w) => wsUserMap.get(w as WebSocket) || 'anon') : [];
           ws.send(JSON.stringify({ type: 'users_in_room', users }));
         }
         // Utilidad: user info
         if (msg.type === 'user_info') {
-          ws.send(JSON.stringify({ type: 'user_info', userId: ws.userId }));
+          ws.send(JSON.stringify({ type: 'user_info', userId: wsUserMap.get(ws) }));
         }
         // Utilidad: permissions (ejemplo simple)
         if (msg.type === 'permissions') {
-          // Aquí puedes consultar permisos reales según tu lógica
           ws.send(JSON.stringify({ type: 'permissions', permissions: ['read', 'write'] }));
         }
         // Utilidad: room info (detalles de la sala y usuarios)
         if (msg.type === 'room_info') {
           const sharedDoc = docs.get(room);
           if (sharedDoc) {
-            const users = Array.from(sharedDoc.conns.keys()).map((ws) => ws.userId || 'anon');
+            const users = Array.from(sharedDoc.conns.keys()).map((w) => wsUserMap.get(w as WebSocket) || 'anon');
             ws.send(JSON.stringify({
               type: 'room_info',
               room,
@@ -93,7 +104,7 @@ export class YjsWebSocketHandler {
           if (sharedDoc) {
             for (const client of sharedDoc.conns.keys()) {
               if (client !== ws) {
-                client.send(JSON.stringify({ type: 'typing', userId: ws.userId, isTyping: msg.isTyping }));
+                client.send(JSON.stringify({ type: 'typing', userId: wsUserMap.get(ws), isTyping: msg.isTyping }));
               }
             }
           }

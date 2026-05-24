@@ -2,3 +2,4 @@
 /.antigravitycli
 /dist
 /node_modules
+.env

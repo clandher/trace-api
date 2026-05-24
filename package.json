@@ -1,6 +1,6 @@
 {
   "name": "collab-canvas-backend",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Backend de sincronización colaborativa en tiempo real para canvas usando Yjs y WebSockets.",
   "type": "module",
   "main": "dist/server.js",
@@ -20,6 +20,8 @@
   "author": "Senior Backend Developer",
   "license": "ISC",
   "dependencies": {
+    "@supabase/supabase-js": "^2.106.1",
+    "jose": "^6.2.3",
     "lib0": "^0.2.91",
     "ws": "^8.18.0",
     "y-websocket": "^2.0.4",
