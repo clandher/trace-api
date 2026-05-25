@@ -3,7 +3,7 @@ import { WebSocket } from 'ws';
 import { createRequire } from 'module';
 import { createClient } from '@supabase/supabase-js';
 // @ts-ignore
-import { setupWSConnection, setPersistence } from 'y-websocket/bin/utils';
+import { setupWSConnection, setPersistence, docs } from 'y-websocket/bin/utils';
 import { AuthService } from '../auth/auth.service.js';
 import { RoomsProvider } from '../rooms/rooms.provider.js';
 import { config } from '../../config/index.js';
@@ -149,6 +149,15 @@ export class WebsocketGateway {
       }
       wsUserMap.set(ws, userId);
       setupWSConnection(ws, req, { docName: room });
+      // Diagnostic: report doc state on every connection so we can see
+      // if server has data when a client connects/reconnects.
+      const doc = (docs as Map<string, any>).get(room);
+      if (doc) {
+        const shapes = doc.getMap('shapes').size;
+        const nodes = doc.getMap('nodes').size;
+        const connections = doc.getMap('connections').size;
+        console.log('[WS] doc state — room:', room, '| conns:', doc.conns.size, '| shapes:', shapes, '| nodes:', nodes, '| connections:', connections);
+      }
     } catch (err) {
       console.error('[WS] internal error:', err);
       ws.close(1011, 'Error interno');
