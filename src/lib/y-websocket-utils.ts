@@ -116,8 +116,11 @@ const messageListener = (conn: any, doc: WSSharedDoc, message: Uint8Array) => {
   }
 };
 
-const closeConn = (doc: WSSharedDoc, conn: any) => {
+const closeConn = (doc: WSSharedDoc, conn: any, reason: string = 'unknown') => {
   if (doc.conns.has(conn)) {
+    const meta = (conn as any).__connMeta;
+    const elapsed = meta ? Date.now() - meta.openedAt : -1;
+    console.log('[WS] close —', reason, '| room:', doc.name.slice(0, 8), '| user:', meta?.userTag ?? '?', '| elapsedMs:', elapsed, '| remaining conns:', doc.conns.size - 1);
     const controlledIds = doc.conns.get(conn)!;
     doc.conns.delete(conn);
     awarenessProtocol.removeAwarenessStates(
@@ -135,14 +138,14 @@ const closeConn = (doc: WSSharedDoc, conn: any) => {
 
 const send = (doc: WSSharedDoc, conn: any, m: Uint8Array) => {
   if (conn.readyState !== wsReadyStateConnecting && conn.readyState !== wsReadyStateOpen) {
-    closeConn(doc, conn);
+    closeConn(doc, conn, 'send-bad-readyState');
   }
   try {
     conn.send(m, (err: any) => {
-      if (err != null) closeConn(doc, conn);
+      if (err != null) closeConn(doc, conn, 'send-callback-error: ' + (err?.message ?? err));
     });
-  } catch (e) {
-    closeConn(doc, conn);
+  } catch (e: any) {
+    closeConn(doc, conn, 'send-throw: ' + (e?.message ?? e));
   }
 };
 
@@ -151,11 +154,13 @@ const pingTimeout = 30000;
 export const setupWSConnection = (
   conn: any,
   req: any,
-  { docName = (req.url || '').slice(1).split('?')[0], gc = true }: { docName?: string; gc?: boolean } = {},
+  { docName = (req.url || '').slice(1).split('?')[0], gc = true, userTag = '?' }: { docName?: string; gc?: boolean; userTag?: string } = {},
 ) => {
   conn.binaryType = 'arraybuffer';
   const doc = getYDoc(docName, gc);
   doc.conns.set(conn, new Set());
+  (conn as any).__connMeta = { openedAt: Date.now(), userTag };
+  console.log('[WS] open — room:', docName.slice(0, 8), '| user:', userTag, '| total conns:', doc.conns.size);
 
   conn.on('message', (message: ArrayBuffer) =>
     messageListener(conn, doc, new Uint8Array(message)),
@@ -164,21 +169,26 @@ export const setupWSConnection = (
   let pongReceived = true;
   const pingInterval = setInterval(() => {
     if (!pongReceived) {
-      if (doc.conns.has(conn)) closeConn(doc, conn);
+      if (doc.conns.has(conn)) closeConn(doc, conn, 'ping-timeout-no-pong');
       clearInterval(pingInterval);
     } else if (doc.conns.has(conn)) {
       pongReceived = false;
       try {
         conn.ping();
-      } catch (e) {
-        closeConn(doc, conn);
+      } catch (e: any) {
+        closeConn(doc, conn, 'ping-throw: ' + (e?.message ?? e));
         clearInterval(pingInterval);
       }
     }
   }, pingTimeout);
 
-  conn.on('close', () => {
-    closeConn(doc, conn);
+  conn.on('close', (code: number, reasonBuf: Buffer) => {
+    const reason = reasonBuf?.toString?.() || '';
+    closeConn(doc, conn, `client-close code=${code} reason="${reason}"`);
+    clearInterval(pingInterval);
+  });
+  conn.on('error', (err: any) => {
+    closeConn(doc, conn, 'ws-error: ' + (err?.message ?? err));
     clearInterval(pingInterval);
   });
   conn.on('pong', () => {
