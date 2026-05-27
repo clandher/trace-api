@@ -10,7 +10,7 @@ export class RoomsProvider {
     });
     const { data: room } = await supabase.from('rooms').select('host_user_id').eq('id', roomId).single();
     if (room?.host_user_id === userId) return true;
-    const { data: invite } = await supabase.from('room_invites').select('id').eq('room_id', roomId).eq('user_id', userId).single();
-    return !!invite;
+    const { data: member } = await supabase.from('room_members').select('user_id').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
+    return !!member;
   }
 }
