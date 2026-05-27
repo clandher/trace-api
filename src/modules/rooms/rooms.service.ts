@@ -1,6 +1,5 @@
 // RoomsService: Lógica de negocio para rooms
-// @ts-ignore
-import { docs } from 'y-websocket/bin/utils';
+import { docs } from '../../lib/y-websocket-utils.js';
 
 export class RoomsService {
   getActiveRooms() {

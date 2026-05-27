@@ -25,7 +25,8 @@
     "jose": "^6.2.3",
     "lib0": "^0.2.91",
     "ws": "^8.18.0",
-    "y-websocket": "^2.0.4",
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^3.0.0",
     "yjs": "^13.6.20"
   },
   "devDependencies": {

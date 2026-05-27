@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /Users/armandordz/arma/trace-api/src/lib)",
+      "Bash(npm i *)",
+      "Bash(timeout 8 npx tsx src/server.ts)"
+    ],
+    "additionalDirectories": [
+      "/Users/armandordz/arma/trace-api/src"
+    ]
+  }
+}

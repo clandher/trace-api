@@ -2,8 +2,7 @@ import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { createRequire } from 'module';
 import { createClient } from '@supabase/supabase-js';
-// @ts-ignore
-import { setupWSConnection, setPersistence, docs } from 'y-websocket/bin/utils';
+import { setupWSConnection, setPersistence, docs } from '../../lib/y-websocket-utils.js';
 import { AuthService } from '../auth/auth.service.js';
 import { RoomsProvider } from '../rooms/rooms.provider.js';
 import { config } from '../../config/index.js';

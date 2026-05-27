@@ -4,8 +4,7 @@ import { config } from './config/index.js';
 import { HealthController } from './modules/health/health.controller.js';
 import { RoomsController } from './modules/rooms/rooms.controller.js';
 import { WebsocketGateway } from './modules/websocket/websocket.gateway.js';
-// @ts-ignore
-import { docs } from 'y-websocket/bin/utils';
+import { docs } from './lib/y-websocket-utils.js';
 
 const { PORT, HOST } = config;
 
