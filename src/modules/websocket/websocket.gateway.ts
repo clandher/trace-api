@@ -102,14 +102,18 @@ export class WebsocketGateway {
       const userId = token ? await AuthService.verifySupabaseJWT(token) : null;
       if (!userId) {
         console.warn('[WS] reject 4002 — room:', room.slice(0, 8), '| token len:', token?.length ?? 0);
-        ws.close(4002, 'Token inválido');
+        // Proxies (Render) strip custom close codes 4000-4999. Send payload
+        // message first so client can detect auth error even when code is lost.
+        try { ws.send(JSON.stringify({ type: 'auth_error', code: 4002, message: 'Token inválido' })); } catch {}
+        ws.close(1008, 'Token inválido');
         return;
       }
       const userTag = userId.slice(0, 6);
       const allowed = await RoomsProvider.isUserAllowed(room, userId, token!);
       if (!allowed) {
         console.warn('[WS] reject 4003 — room:', room.slice(0, 8), '| user:', userTag);
-        ws.close(4003, 'No autorizado para acceder a esta sala');
+        try { ws.send(JSON.stringify({ type: 'auth_error', code: 4003, message: 'No autorizado para acceder a esta sala' })); } catch {}
+        ws.close(1008, 'No autorizado para acceder a esta sala');
         return;
       }
       wsUserMap.set(ws, userId);
