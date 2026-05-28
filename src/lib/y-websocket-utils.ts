@@ -78,16 +78,18 @@ export class WSSharedDoc extends Y.Doc {
   }
 }
 
-export const getYDoc = (docname: string, gc = true): WSSharedDoc =>
-  map.setIfUndefined(docs, docname, () => {
-    const doc = new WSSharedDoc(docname);
+export const getYDoc = async (docname: string, gc = true): Promise<WSSharedDoc> => {
+  let doc = docs.get(docname);
+  if (!doc) {
+    doc = new WSSharedDoc(docname);
     doc.gc = gc;
-    if (persistence !== null) {
-      persistence.bindState(docname, doc);
-    }
     docs.set(docname, doc);
-    return doc;
-  });
+    if (persistence !== null) {
+      await persistence.bindState(docname, doc);
+    }
+  }
+  return doc;
+};
 
 const messageListener = (conn: any, doc: WSSharedDoc, message: Uint8Array) => {
   try {
@@ -151,13 +153,13 @@ const send = (doc: WSSharedDoc, conn: any, m: Uint8Array) => {
 
 const pingTimeout = 30000;
 
-export const setupWSConnection = (
+export const setupWSConnection = async (
   conn: any,
   req: any,
   { docName = (req.url || '').slice(1).split('?')[0], gc = true, userTag = '?' }: { docName?: string; gc?: boolean; userTag?: string } = {},
 ) => {
   conn.binaryType = 'arraybuffer';
-  const doc = getYDoc(docName, gc);
+  const doc = await getYDoc(docName, gc);
   doc.conns.set(conn, new Set());
   (conn as any).__connMeta = { openedAt: Date.now(), userTag };
   console.log('[WS] open — room:', docName.slice(0, 8), '| user:', userTag, '| total conns:', doc.conns.size);

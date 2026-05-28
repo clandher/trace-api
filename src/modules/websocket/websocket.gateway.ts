@@ -1,14 +1,11 @@
 import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
-import { createRequire } from 'module';
+import * as Y from 'yjs';
 import { createClient } from '@supabase/supabase-js';
 import { setupWSConnection, setPersistence } from '../../lib/y-websocket-utils.js';
 import { AuthService } from '../auth/auth.service.js';
 import { RoomsProvider } from '../rooms/rooms.provider.js';
 import { config } from '../../config/index.js';
-
-const _require = createRequire(import.meta.url);
-const Y = _require('yjs');
 
 // Diagnostic — confirms what key is loaded (prefix only).
 console.log('[Yjs persist] SUPABASE_SERVICE_ROLE_KEY prefix:', config.SUPABASE_SERVICE_ROLE_KEY.slice(0, 16), '| length:', config.SUPABASE_SERVICE_ROLE_KEY.length);
@@ -117,7 +114,7 @@ export class WebsocketGateway {
         return;
       }
       wsUserMap.set(ws, userId);
-      setupWSConnection(ws, req, { docName: room, userTag });
+      await setupWSConnection(ws, req, { docName: room, userTag });
     } catch (err: any) {
       console.error('[WS] handleConnection threw:', err?.message ?? err);
       ws.close(1011, 'Error interno');
